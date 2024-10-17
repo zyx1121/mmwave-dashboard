@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:latest
+    container_name: postgres
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: nodedatabase
+    ports:
+      - "5432:5432"
+    networks:
+      - nodenetwork
+
+networks:
+  nodenetwork:
+    driver: bridge
