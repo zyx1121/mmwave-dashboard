@@ -41,7 +41,7 @@ class AirTag:
             raise RuntimeError(f"Command failed with error: {result.stderr}")
 
     def update_node_location(self, node_id, lat, lng):
-        url = "http://localhost:3000/api/node"
+        url = "http://localhost:3000/api/location"
         data = {"id": node_id, "lat": lat, "lng": lng}
 
         try:

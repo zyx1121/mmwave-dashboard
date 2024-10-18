@@ -1,32 +1,9 @@
 'use client'
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Network, Data, Options } from 'vis-network/standalone';
-import { isEqual } from 'lodash';
-
-interface LinkEndpoint {
-  dpid: string;
-  port_no: string;
-  hw_addr: string;
-  name: string;
-}
-
-interface Link {
-  src: LinkEndpoint;
-  dst: LinkEndpoint;
-}
-
-interface Host {
-  mac: string;
-  ipv4: string[];
-  ipv6: string[];
-  port: {
-    dpid: string;
-    port_no: string;
-    hw_addr: string;
-    name: string;
-  };
-}
+import { isEqual, debounce } from 'lodash';
+import { Link, Host } from '@/types';
 
 const Topology: React.FC = () => {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -34,44 +11,60 @@ const Topology: React.FC = () => {
   const [hosts, setHosts] = useState<Host[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [intervalId, setIntervalId] = useState<NodeJS.Timeout | null>(null);
   const [network, setNetwork] = useState<Network | null>(null);
+  const [lastUpdateTime, setLastUpdateTime] = useState<number>(0);
+  const fetchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const fetchData = async () => {
-    try {
-      const timestamp = Date.now();
-      const linksResponse = await fetch(`/api/topology/links?_t=${timestamp}`);
-      const hostsResponse = await fetch(`/api/topology/hosts?_t=${timestamp}`);
-      
-      if (!linksResponse.ok || !hostsResponse.ok) {
-        throw new Error(`HTTP error! status: ${linksResponse.status} or ${hostsResponse.status}`);
+  const debouncedFetchData = useCallback(
+    debounce(async () => {
+      const currentTime = Date.now();
+      if (currentTime - lastUpdateTime < 5000) {
+        return;
       }
-      
-      const newLinks = await linksResponse.json();
-      const newHosts = await hostsResponse.json();
 
-      setLinks(prevLinks => isEqual(prevLinks, newLinks) ? prevLinks : newLinks);
-      setHosts(prevHosts => isEqual(prevHosts, newHosts) ? prevHosts : newHosts);
+      try {
+        const [linksResponse, hostsResponse] = await Promise.all([
+          fetch('/api/topology/links'),
+          fetch('/api/topology/hosts')
+        ]);
 
-      setIsLoading(false);
-    } catch (error) {
-      console.error('Error fetching topology data:', error);
-      setError('Error fetching data');
-      setIsLoading(false);
-    }
-  };
+        if (!linksResponse.ok || !hostsResponse.ok) {
+          throw new Error(`HTTP error! status: ${linksResponse.status} or ${hostsResponse.status}`);
+        }
+
+        const [newLinks, newHosts] = await Promise.all([
+          linksResponse.json(),
+          hostsResponse.json()
+        ]);
+
+        setLinks(prevLinks => isEqual(prevLinks, newLinks) ? prevLinks : newLinks);
+        setHosts(prevHosts => isEqual(prevHosts, newHosts) ? prevHosts : newHosts);
+        setLastUpdateTime(currentTime);
+        setIsLoading(false);
+      } catch (error) {
+        console.error('Error fetching topology data:', error);
+        setError('Error fetching data');
+        setIsLoading(false);
+      }
+    }, 1000),
+    [lastUpdateTime, setLinks, setHosts, setLastUpdateTime, setIsLoading, setError]
+  );
 
   useEffect(() => {
-    fetchData();
-    const id = setInterval(fetchData, 1000);
-    setIntervalId(id);
+    const fetchDataAndScheduleNext = () => {
+      debouncedFetchData();
+      fetchTimeoutRef.current = setTimeout(fetchDataAndScheduleNext, 5000);
+    };
+
+    fetchDataAndScheduleNext();
 
     return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
+      if (fetchTimeoutRef.current) {
+        clearTimeout(fetchTimeoutRef.current);
       }
+      debouncedFetchData.cancel();
     };
-  }, []);
+  }, [debouncedFetchData]);
 
   useEffect(() => {
     if (links.length === 0 && hosts.length === 0) {
@@ -168,22 +161,28 @@ const Topology: React.FC = () => {
         setNetwork(newNetwork);
       }
     }
-  }, [links, hosts]);
+  }, [links, hosts, network]);
 
   if (isLoading) {
-    return <div>正在更新...</div>;
+    return <div className='w-full h-full border border-input rounded-lg flex items-center justify-center'>
+      Loading Topology...
+    </div>;
   }
 
   if (error) {
-    return <div>錯誤：{error}</div>;
+    return <div className='w-full h-full border border-input rounded-lg flex items-center justify-center'>
+      Error: {error}
+    </div>;
   }
 
   if (links.length === 0 && hosts.length === 0) {
-    return <div>沒有可用的拓撲數據</div>;
+    return <div className='w-full h-full border border-input rounded-lg flex items-center justify-center'>
+      No available topology data
+    </div>;
   }
 
   return (
-    <div ref={containerRef} className="h-full w-full" />
+    <div ref={containerRef} className="h-full w-full border border-input rounded-xl" />
   );
 };
 
